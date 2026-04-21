@@ -102,7 +102,10 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     unsigned char *full_obj;
     char final_path[512];
     char shard_dir[512];
+    char temp_path[512];
     const char *slash;
+    int temp_fd = -1;
+    size_t written = 0;
 
     if (!data || !id_out) return -1;
 
@@ -145,6 +148,29 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
         return -1;
     }
     if (mkdir(shard_dir, 0755) != 0 && errno != EEXIST) {
+        free(full_obj);
+        return -1;
+    }
+
+    snprintf(temp_path, sizeof(temp_path), "%s/.tmp-%d-%ld", shard_dir, (int)getpid(), (long)random());
+    temp_fd = open(temp_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (temp_fd < 0) {
+        free(full_obj);
+        return -1;
+    }
+
+    while (written < full_len) {
+        ssize_t n = write(temp_fd, full_obj + written, full_len - written);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            close(temp_fd);
+            free(full_obj);
+            return -1;
+        }
+        written += (size_t)n;
+    }
+
+    if (close(temp_fd) != 0) {
         free(full_obj);
         return -1;
     }
