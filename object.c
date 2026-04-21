@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <errno.h>
 #include <openssl/evp.h>
 
 // ─── PROVIDED ────────────────────────────────────────────────────────────────
@@ -99,6 +100,9 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     int header_len;
     size_t full_len;
     unsigned char *full_obj;
+    char final_path[512];
+    char shard_dir[512];
+    const char *slash;
 
     if (!data || !id_out) return -1;
 
@@ -125,6 +129,26 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
         free(full_obj);
         return 0;
     }
+
+    object_path(id_out, final_path, sizeof(final_path));
+    slash = strrchr(final_path, '/');
+    if (!slash || (size_t)(slash - final_path) >= sizeof(shard_dir)) {
+        free(full_obj);
+        return -1;
+    }
+
+    memcpy(shard_dir, final_path, (size_t)(slash - final_path));
+    shard_dir[slash - final_path] = '\0';
+
+    if (mkdir(OBJECTS_DIR, 0755) != 0 && errno != EEXIST) {
+        free(full_obj);
+        return -1;
+    }
+    if (mkdir(shard_dir, 0755) != 0 && errno != EEXIST) {
+        free(full_obj);
+        return -1;
+    }
+
     free(full_obj);
 
     return -1;
