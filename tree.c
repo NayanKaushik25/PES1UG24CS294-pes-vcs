@@ -20,6 +20,14 @@
 // Forward declaration (implemented in object.c)
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out);
 
+// Fallback for unit-test link targets that don't include index.o.
+// In full builds, index.c provides a strong definition that overrides this.
+__attribute__((weak)) int index_load(Index *index) {
+    if (!index) return -1;
+    index->count = 0;
+    return 0;
+}
+
 // ─── Mode Constants ─────────────────────────────────────────────────────────
 
 #define MODE_FILE      0100644
