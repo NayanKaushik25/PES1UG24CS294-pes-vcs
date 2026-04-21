@@ -25,6 +25,9 @@
 #include <dirent.h>
 #include <time.h>
 
+// Forward declaration (implemented in object.c)
+int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out);
+
 // ─── PROVIDED ────────────────────────────────────────────────────────────────
 
 // Find an index entry by path (linear scan).
@@ -255,8 +258,53 @@ int index_save(const Index *index) {
 //
 // Returns 0 on success, -1 on error.
 int index_add(Index *index, const char *path) {
-    // TODO: Implement file staging
-    // (See Lab Appendix for logical steps)
-    (void)index; (void)path;
-    return -1;
+    FILE *f;
+    struct stat st;
+    unsigned char *buf = NULL;
+    size_t len;
+    size_t read_len;
+    ObjectID blob_id;
+    IndexEntry *entry;
+
+    if (!index || !path) return -1;
+    if (lstat(path, &st) != 0) return -1;
+    if (!S_ISREG(st.st_mode)) return -1;
+
+    len = (size_t)st.st_size;
+    buf = (unsigned char *)malloc(len);
+    if (!buf && len > 0) return -1;
+
+    f = fopen(path, "rb");
+    if (!f) {
+        free(buf);
+        return -1;
+    }
+
+    read_len = (len > 0) ? fread(buf, 1, len, f) : 0;
+    if (read_len != len) {
+        fclose(f);
+        free(buf);
+        return -1;
+    }
+    fclose(f);
+
+    if (object_write(OBJ_BLOB, buf, len, &blob_id) != 0) {
+        free(buf);
+        return -1;
+    }
+    free(buf);
+
+    entry = index_find(index, path);
+    if (!entry) {
+        if (index->count >= MAX_INDEX_ENTRIES) return -1;
+        entry = &index->entries[index->count++];
+    }
+
+    entry->mode = (uint32_t)get_file_mode(path);
+    entry->hash = blob_id;
+    entry->mtime_sec = (uint64_t)st.st_mtime;
+    entry->size = (uint32_t)len;
+    snprintf(entry->path, sizeof(entry->path), "%s", path);
+
+    return 0;
 }
