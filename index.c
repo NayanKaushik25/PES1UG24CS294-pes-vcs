@@ -199,28 +199,32 @@ static int compare_index_entries_by_path(const void *a, const void *b) {
 
 int index_save(const Index *index) {
     FILE *f;
-    Index sorted;
+    Index *sorted;
     const char *tmp_path = INDEX_FILE ".tmp";
 
     if (!index) return -1;
 
-    sorted = *index;
-    qsort(sorted.entries, sorted.count, sizeof(IndexEntry), compare_index_entries_by_path);
+    sorted = (Index *)malloc(sizeof(Index));
+    if (!sorted) return -1;
+
+    *sorted = *index;
+    qsort(sorted->entries, sorted->count, sizeof(IndexEntry), compare_index_entries_by_path);
 
     f = fopen(tmp_path, "w");
     if (!f) return -1;
 
-    for (int i = 0; i < sorted.count; i++) {
+    for (int i = 0; i < sorted->count; i++) {
         char hex[HASH_HEX_SIZE + 1];
-        hash_to_hex(&sorted.entries[i].hash, hex);
+        hash_to_hex(&sorted->entries[i].hash, hex);
         if (fprintf(f, "%o %s %llu %u %s\n",
-                    sorted.entries[i].mode,
+                    sorted->entries[i].mode,
                     hex,
-                    (unsigned long long)sorted.entries[i].mtime_sec,
-                    sorted.entries[i].size,
-                    sorted.entries[i].path) < 0) {
+                    (unsigned long long)sorted->entries[i].mtime_sec,
+                    sorted->entries[i].size,
+                    sorted->entries[i].path) < 0) {
             fclose(f);
             unlink(tmp_path);
+            free(sorted);
             return -1;
         }
     }
@@ -228,23 +232,28 @@ int index_save(const Index *index) {
     if (fflush(f) != 0) {
         fclose(f);
         unlink(tmp_path);
+        free(sorted);
         return -1;
     }
     if (fsync(fileno(f)) != 0) {
         fclose(f);
         unlink(tmp_path);
+        free(sorted);
         return -1;
     }
     if (fclose(f) != 0) {
         unlink(tmp_path);
+        free(sorted);
         return -1;
     }
 
     if (rename(tmp_path, INDEX_FILE) != 0) {
         unlink(tmp_path);
+        free(sorted);
         return -1;
     }
 
+    free(sorted);
     return 0;
 }
 
@@ -300,7 +309,7 @@ int index_add(Index *index, const char *path) {
         entry = &index->entries[index->count++];
     }
 
-    entry->mode = (uint32_t)get_file_mode(path);
+    entry->mode = (st.st_mode & S_IXUSR) ? 0100755 : 0100644;
     entry->hash = blob_id;
     entry->mtime_sec = (uint64_t)st.st_mtime;
     entry->size = (uint32_t)len;
