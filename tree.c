@@ -118,6 +118,47 @@ int tree_serialize(const Tree *tree, void **data_out, size_t *len_out) {
     return 0;
 }
 
+// Incremental helper: write a subtree for entries under "<dir>/..." where
+// the remaining path segment is a single filename (no deeper '/').
+static int write_subtree_one_level(const Index *index, const char *dir, ObjectID *id_out) {
+    Tree subtree = {0};
+    char prefix[300];
+    size_t prefix_len;
+    void *raw = NULL;
+    size_t raw_len = 0;
+
+    snprintf(prefix, sizeof(prefix), "%s/", dir);
+    prefix_len = strlen(prefix);
+
+    for (int i = 0; i < index->count; i++) {
+        const IndexEntry *ie = &index->entries[i];
+        const char *leaf;
+        TreeEntry *te;
+
+        if (strncmp(ie->path, prefix, prefix_len) != 0) continue;
+
+        leaf = ie->path + prefix_len;
+        if (strchr(leaf, '/') != NULL) {
+            // Deeper nesting will be implemented in a later commit.
+            return -1;
+        }
+
+        if (subtree.count >= MAX_TREE_ENTRIES) return -1;
+        te = &subtree.entries[subtree.count++];
+        te->mode = ie->mode;
+        te->hash = ie->hash;
+        snprintf(te->name, sizeof(te->name), "%s", leaf);
+    }
+
+    if (tree_serialize(&subtree, &raw, &raw_len) != 0) return -1;
+    if (object_write(OBJ_TREE, raw, raw_len, id_out) != 0) {
+        free(raw);
+        return -1;
+    }
+    free(raw);
+    return 0;
+}
+
 // ─── TODO: Implement these ──────────────────────────────────────────────────
 
 // Build a tree hierarchy from the current index and write all tree
@@ -158,18 +199,45 @@ int tree_from_index(ObjectID *id_out) {
     for (i = 0; i < index.count; i++) {
         const IndexEntry *ie = &index.entries[i];
         TreeEntry *te;
+        const char *slash = strchr(ie->path, '/');
 
-        if (strchr(ie->path, '/') != NULL) {
-            // Nested directories will be handled in a later commit.
-            return -1;
+        if (!slash) {
+            if (tree.count >= MAX_TREE_ENTRIES) return -1;
+
+            te = &tree.entries[tree.count++];
+            te->mode = ie->mode;
+            te->hash = ie->hash;
+            snprintf(te->name, sizeof(te->name), "%s", ie->path);
+            continue;
         }
 
-        if (tree.count >= MAX_TREE_ENTRIES) return -1;
+        // One-level nested support: add one root directory entry per top-level folder.
+        {
+            char dir_name[256];
+            size_t dir_len = (size_t)(slash - ie->path);
+            int exists = 0;
+            ObjectID subtree_id;
 
-        te = &tree.entries[tree.count++];
-        te->mode = ie->mode;
-        te->hash = ie->hash;
-        snprintf(te->name, sizeof(te->name), "%s", ie->path);
+            if (dir_len == 0 || dir_len >= sizeof(dir_name)) return -1;
+            memcpy(dir_name, ie->path, dir_len);
+            dir_name[dir_len] = '\0';
+
+            for (int j = 0; j < tree.count; j++) {
+                if (tree.entries[j].mode == MODE_DIR && strcmp(tree.entries[j].name, dir_name) == 0) {
+                    exists = 1;
+                    break;
+                }
+            }
+            if (exists) continue;
+
+            if (write_subtree_one_level(&index, dir_name, &subtree_id) != 0) return -1;
+            if (tree.count >= MAX_TREE_ENTRIES) return -1;
+
+            te = &tree.entries[tree.count++];
+            te->mode = MODE_DIR;
+            te->hash = subtree_id;
+            snprintf(te->name, sizeof(te->name), "%s", dir_name);
+        }
     }
 
     if (tree_serialize(&tree, &raw, &raw_len) != 0) return -1;
