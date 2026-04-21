@@ -97,6 +97,8 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     const char *type_str;
     char header[64];
     int header_len;
+    size_t full_len;
+    unsigned char *full_obj;
 
     if (!data || !id_out) return -1;
 
@@ -110,8 +112,17 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     header_len = snprintf(header, sizeof(header), "%s %zu", type_str, len);
     if (header_len < 0 || (size_t)header_len + 1 > sizeof(header)) return -1;
 
-    (void)header;
-    (void)header_len;
+    full_len = (size_t)header_len + 1 + len;
+    full_obj = (unsigned char *)malloc(full_len);
+    if (!full_obj) return -1;
+
+    memcpy(full_obj, header, (size_t)header_len);
+    full_obj[header_len] = '\0';
+    if (len > 0) memcpy(full_obj + header_len + 1, data, len);
+
+    compute_hash(full_obj, full_len, id_out);
+    free(full_obj);
+
     return -1;
 }
 
