@@ -188,11 +188,40 @@ int index_load(Index *index) {
 //   - rename                           : atomically moving the temp file over the old index
 //
 // Returns 0 on success, -1 on error.
+static int compare_index_entries_by_path(const void *a, const void *b) {
+    const IndexEntry *ea = (const IndexEntry *)a;
+    const IndexEntry *eb = (const IndexEntry *)b;
+    return strcmp(ea->path, eb->path);
+}
+
 int index_save(const Index *index) {
-    // TODO: Implement atomic index saving
-    // (See Lab Appendix for logical steps)
-    (void)index;
-    return -1;
+    FILE *f;
+    Index sorted;
+
+    if (!index) return -1;
+
+    sorted = *index;
+    qsort(sorted.entries, sorted.count, sizeof(IndexEntry), compare_index_entries_by_path);
+
+    f = fopen(INDEX_FILE, "w");
+    if (!f) return -1;
+
+    for (int i = 0; i < sorted.count; i++) {
+        char hex[HASH_HEX_SIZE + 1];
+        hash_to_hex(&sorted.entries[i].hash, hex);
+        if (fprintf(f, "%o %s %llu %u %s\n",
+                    sorted.entries[i].mode,
+                    hex,
+                    (unsigned long long)sorted.entries[i].mtime_sec,
+                    sorted.entries[i].size,
+                    sorted.entries[i].path) < 0) {
+            fclose(f);
+            return -1;
+        }
+    }
+
+    if (fclose(f) != 0) return -1;
+    return 0;
 }
 
 // Stage a file for the next commit.
