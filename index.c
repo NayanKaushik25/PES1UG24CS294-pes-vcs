@@ -197,13 +197,14 @@ static int compare_index_entries_by_path(const void *a, const void *b) {
 int index_save(const Index *index) {
     FILE *f;
     Index sorted;
+    const char *tmp_path = INDEX_FILE ".tmp";
 
     if (!index) return -1;
 
     sorted = *index;
     qsort(sorted.entries, sorted.count, sizeof(IndexEntry), compare_index_entries_by_path);
 
-    f = fopen(INDEX_FILE, "w");
+    f = fopen(tmp_path, "w");
     if (!f) return -1;
 
     for (int i = 0; i < sorted.count; i++) {
@@ -216,11 +217,31 @@ int index_save(const Index *index) {
                     sorted.entries[i].size,
                     sorted.entries[i].path) < 0) {
             fclose(f);
+            unlink(tmp_path);
             return -1;
         }
     }
 
-    if (fclose(f) != 0) return -1;
+    if (fflush(f) != 0) {
+        fclose(f);
+        unlink(tmp_path);
+        return -1;
+    }
+    if (fsync(fileno(f)) != 0) {
+        fclose(f);
+        unlink(tmp_path);
+        return -1;
+    }
+    if (fclose(f) != 0) {
+        unlink(tmp_path);
+        return -1;
+    }
+
+    if (rename(tmp_path, INDEX_FILE) != 0) {
+        unlink(tmp_path);
+        return -1;
+    }
+
     return 0;
 }
 
