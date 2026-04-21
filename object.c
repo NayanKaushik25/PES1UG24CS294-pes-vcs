@@ -18,6 +18,10 @@
 #include <errno.h>
 #include <openssl/evp.h>
 
+#ifndef O_DIRECTORY
+#define O_DIRECTORY 0
+#endif
+
 // ─── PROVIDED ────────────────────────────────────────────────────────────────
 
 void hash_to_hex(const ObjectID *id, char *hex_out) {
@@ -105,9 +109,11 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     char temp_path[512];
     const char *slash;
     int temp_fd = -1;
+    int dir_fd = -1;
     size_t written = 0;
+    int ok = 0;
 
-    if (!data || !id_out) return -1;
+    if ((!data && len > 0) || !id_out) return -1;
 
     switch (type) {
         case OBJ_BLOB: type_str = "blob"; break;
@@ -163,21 +169,33 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
         ssize_t n = write(temp_fd, full_obj + written, full_len - written);
         if (n < 0) {
             if (errno == EINTR) continue;
-            close(temp_fd);
-            free(full_obj);
-            return -1;
+            goto cleanup;
         }
         written += (size_t)n;
     }
 
+    if (fsync(temp_fd) != 0) goto cleanup;
     if (close(temp_fd) != 0) {
-        free(full_obj);
-        return -1;
+        temp_fd = -1;
+        goto cleanup;
     }
+    temp_fd = -1;
+
+    if (rename(temp_path, final_path) != 0) goto cleanup;
+
+    dir_fd = open(shard_dir, O_RDONLY | O_DIRECTORY);
+    if (dir_fd < 0) goto cleanup;
+    if (fsync(dir_fd) != 0) goto cleanup;
+
+    ok = 1;
+
+cleanup:
+    if (dir_fd >= 0) close(dir_fd);
+    if (temp_fd >= 0) close(temp_fd);
+    if (!ok) unlink(temp_path);
 
     free(full_obj);
-
-    return -1;
+    return ok ? 0 : -1;
 }
 
 // Read an object from the store.
@@ -203,7 +221,76 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
 // The caller is responsible for calling free(*data_out).
 // Returns 0 on success, -1 on error (file not found, corrupt, etc.).
 int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_t *len_out) {
-    // TODO: Implement
-    (void)id; (void)type_out; (void)data_out; (void)len_out;
+    char path[512];
+    FILE *f = NULL;
+    long file_size_long;
+    size_t file_size;
+    unsigned char *buf = NULL;
+    unsigned char *nul;
+    char type_str[16];
+    size_t parsed_len;
+    ObjectType parsed_type;
+    ObjectID recomputed;
+    void *payload = NULL;
+    size_t payload_len;
+
+    if (!id || !type_out || !data_out || !len_out) return -1;
+
+    object_path(id, path, sizeof(path));
+    f = fopen(path, "rb");
+    if (!f) return -1;
+
+    if (fseek(f, 0, SEEK_END) != 0) goto fail;
+    file_size_long = ftell(f);
+    if (file_size_long < 0) goto fail;
+    if (fseek(f, 0, SEEK_SET) != 0) goto fail;
+
+    file_size = (size_t)file_size_long;
+    if (file_size == 0) goto fail;
+
+    buf = (unsigned char *)malloc(file_size);
+    if (!buf) goto fail;
+
+    if (fread(buf, 1, file_size, f) != file_size) goto fail;
+    fclose(f);
+    f = NULL;
+
+    compute_hash(buf, file_size, &recomputed);
+    if (memcmp(recomputed.hash, id->hash, HASH_SIZE) != 0) goto fail;
+
+    nul = (unsigned char *)memchr(buf, '\0', file_size);
+    if (!nul) goto fail;
+
+    if (sscanf((const char *)buf, "%15s %zu", type_str, &parsed_len) != 2) goto fail;
+
+    if (strcmp(type_str, "blob") == 0) {
+        parsed_type = OBJ_BLOB;
+    } else if (strcmp(type_str, "tree") == 0) {
+        parsed_type = OBJ_TREE;
+    } else if (strcmp(type_str, "commit") == 0) {
+        parsed_type = OBJ_COMMIT;
+    } else {
+        goto fail;
+    }
+
+    payload_len = file_size - (size_t)(nul - buf) - 1;
+    if (payload_len != parsed_len) goto fail;
+
+    if (payload_len > 0) {
+        payload = malloc(payload_len);
+        if (!payload) goto fail;
+        memcpy(payload, nul + 1, payload_len);
+    }
+
+    *type_out = parsed_type;
+    *data_out = payload;
+    *len_out = payload_len;
+    free(buf);
+    return 0;
+
+fail:
+    if (f) fclose(f);
+    free(buf);
+    free(payload);
     return -1;
 }
