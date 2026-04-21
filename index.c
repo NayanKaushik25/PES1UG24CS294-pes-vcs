@@ -23,6 +23,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <time.h>
 
 // ─── PROVIDED ────────────────────────────────────────────────────────────────
 
@@ -135,10 +136,20 @@ int index_status(const Index *index) {
 //
 // Returns 0 on success, -1 on error.
 int index_load(Index *index) {
-    // TODO: Implement index loading
-    // (See Lab Appendix for logical steps)
-    (void)index;
-    return -1;
+    FILE *f;
+
+    if (!index) return -1;
+    index->count = 0;
+
+    f = fopen(INDEX_FILE, "r");
+    if (!f) {
+        // Missing index is a valid empty staging area.
+        return 0;
+    }
+
+    // Line parsing will be added in the next incremental commit.
+    fclose(f);
+    return 0;
 }
 
 // Save the index to .pes/index atomically.
