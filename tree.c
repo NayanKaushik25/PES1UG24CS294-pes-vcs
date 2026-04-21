@@ -10,11 +10,15 @@
 //   "100644 hello.txt\0" followed by 32 raw bytes of SHA-256
 
 #include "tree.h"
+#include "index.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+
+// Forward declaration (implemented in object.c)
+int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out);
 
 // ─── Mode Constants ─────────────────────────────────────────────────────────
 
@@ -130,8 +134,25 @@ int tree_serialize(const Tree *tree, void **data_out, size_t *len_out) {
 //
 // Returns 0 on success, -1 on error.
 int tree_from_index(ObjectID *id_out) {
-    // TODO: Implement recursive tree building
-    // (See Lab Appendix for logical steps)
-    (void)id_out;
+    Index index;
+    Tree tree = {0};
+    void *raw = NULL;
+    size_t raw_len = 0;
+
+    if (!id_out) return -1;
+    if (index_load(&index) != 0) return -1;
+
+    // First incremental step: represent an empty staging area as an empty root tree.
+    if (index.count == 0) {
+        if (tree_serialize(&tree, &raw, &raw_len) != 0) return -1;
+        if (object_write(OBJ_TREE, raw, raw_len, id_out) != 0) {
+            free(raw);
+            return -1;
+        }
+        free(raw);
+        return 0;
+    }
+
+    // Non-empty recursive construction will be added in the next commit.
     return -1;
 }
