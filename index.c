@@ -306,5 +306,5 @@ int index_add(Index *index, const char *path) {
     entry->size = (uint32_t)len;
     snprintf(entry->path, sizeof(entry->path), "%s", path);
 
-    return 0;
+    return index_save(index);
 }
