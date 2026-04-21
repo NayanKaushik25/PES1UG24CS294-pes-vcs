@@ -137,6 +137,11 @@ int index_status(const Index *index) {
 // Returns 0 on success, -1 on error.
 int index_load(Index *index) {
     FILE *f;
+    unsigned int mode;
+    char hash_hex[HASH_HEX_SIZE + 1];
+    unsigned long long mtime;
+    unsigned int size;
+    char path[512];
 
     if (!index) return -1;
     index->count = 0;
@@ -147,7 +152,28 @@ int index_load(Index *index) {
         return 0;
     }
 
-    // Line parsing will be added in the next incremental commit.
+    while (fscanf(f, "%o %64s %llu %u %511s", &mode, hash_hex, &mtime, &size, path) == 5) {
+        IndexEntry *e;
+
+        if (index->count >= MAX_INDEX_ENTRIES) {
+            fclose(f);
+            return -1;
+        }
+
+        e = &index->entries[index->count];
+        e->mode = mode;
+        e->mtime_sec = (uint64_t)mtime;
+        e->size = size;
+        snprintf(e->path, sizeof(e->path), "%s", path);
+
+        if (hex_to_hash(hash_hex, &e->hash) != 0) {
+            fclose(f);
+            return -1;
+        }
+
+        index->count++;
+    }
+
     fclose(f);
     return 0;
 }
