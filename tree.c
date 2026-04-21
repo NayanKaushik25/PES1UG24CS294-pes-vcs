@@ -138,6 +138,7 @@ int tree_from_index(ObjectID *id_out) {
     Tree tree = {0};
     void *raw = NULL;
     size_t raw_len = 0;
+    int i;
 
     if (!id_out) return -1;
     if (index_load(&index) != 0) return -1;
@@ -153,6 +154,29 @@ int tree_from_index(ObjectID *id_out) {
         return 0;
     }
 
-    // Non-empty recursive construction will be added in the next commit.
-    return -1;
+    // Incremental step: support only flat paths at root level.
+    for (i = 0; i < index.count; i++) {
+        const IndexEntry *ie = &index.entries[i];
+        TreeEntry *te;
+
+        if (strchr(ie->path, '/') != NULL) {
+            // Nested directories will be handled in a later commit.
+            return -1;
+        }
+
+        if (tree.count >= MAX_TREE_ENTRIES) return -1;
+
+        te = &tree.entries[tree.count++];
+        te->mode = ie->mode;
+        te->hash = ie->hash;
+        snprintf(te->name, sizeof(te->name), "%s", ie->path);
+    }
+
+    if (tree_serialize(&tree, &raw, &raw_len) != 0) return -1;
+    if (object_write(OBJ_TREE, raw, raw_len, id_out) != 0) {
+        free(raw);
+        return -1;
+    }
+    free(raw);
+    return 0;
 }
